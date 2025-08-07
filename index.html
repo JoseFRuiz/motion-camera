@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Motion Detection Camera</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            color: white;
+        }
+
+        .container {
+            max-width: 400px;
+            width: 100%;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 24px;
+        }
+
+        #video {
+            width: 100%;
+            height: 300px;
+            border-radius: 15px;
+            object-fit: cover;
+            background: #333;
+            margin-bottom: 20px;
+        }
+
+        .status-section {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .motion-status {
+            font-size: 24px;
+            font-weight: bold;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            transition: all 0.3s ease;
+        }
+
+        .still {
+            background: rgba(34, 197, 94, 0.3);
+            color: #22c55e;
+        }
+
+        .moving {
+            background: rgba(239, 68, 68, 0.3);
+            color: #ef4444;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+
+        button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        button:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .info {
+            font-size: 14px;
+            text-align: center;
+            opacity: 0.8;
+            line-height: 1.4;
+        }
+
+        .sensor-data {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 10px;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+
+        .error {
+            background: rgba(239, 68, 68, 0.3);
+            color: #ef4444;
+            padding: 10px;
+            border-radius: 8px;
+            margin: 10px 0;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📱 Motion Camera</h1>
+        
+        <video id="video" autoplay muted playsinline></video>
+        
+        <div class="status-section">
+            <div id="motionStatus" class="motion-status still">📱 STILL</div>
+            <div class="controls">
+                <button id="startBtn">Start Camera</button>
+                <button id="stopBtn" disabled>Stop Camera</button>
+            </div>
+        </div>
+
+        <div id="error" class="error" style="display: none;"></div>
+        
+        <div class="info">
+            This app uses your device's camera and motion sensors to detect movement.
+            <div id="sensorData" class="sensor-data" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script>
+        let video = document.getElementById('video');
+        let motionStatus = document.getElementById('motionStatus');
+        let startBtn = document.getElementById('startBtn');
+        let stopBtn = document.getElementById('stopBtn');
+        let errorDiv = document.getElementById('error');
+        let sensorData = document.getElementById('sensorData');
+        
+        let stream = null;
+        let isMoving = false;
+        let lastAcceleration = { x: 0, y: 0, z: 0 };
+        let motionThreshold = 2.5;
+        let motionTimeout = null;
+
+        // Function to show error messages
+        function showError(message) {
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        function hideError() {
+            errorDiv.style.display = 'none';
+        }
+
+        // Function to update motion status
+        function updateMotionStatus(moving) {
+            if (moving !== isMoving) {
+                isMoving = moving;
+                if (isMoving) {
+                    motionStatus.textContent = '🏃 MOVING';
+                    motionStatus.className = 'motion-status moving';
+                } else {
+                    motionStatus.textContent = '📱 STILL';
+                    motionStatus.className = 'motion-status still';
+                }
+            }
+        }
+
+        // Handle device motion
+        function handleDeviceMotion(event) {
+            if (event.accelerationIncludingGravity) {
+                const acc = event.accelerationIncludingGravity;
+                
+                // Calculate the change in acceleration
+                const deltaX = Math.abs(acc.x - lastAcceleration.x);
+                const deltaY = Math.abs(acc.y - lastAcceleration.y);
+                const deltaZ = Math.abs(acc.z - lastAcceleration.z);
+                
+                const totalDelta = deltaX + deltaY + deltaZ;
+                
+                // Update sensor data display
+                sensorData.innerHTML = `
+                    Acceleration: x=${acc.x?.toFixed(2)}, y=${acc.y?.toFixed(2)}, z=${acc.z?.toFixed(2)}<br>
+                    Motion Delta: ${totalDelta?.toFixed(2)} (threshold: ${motionThreshold})
+                `;
+                sensorData.style.display = 'block';
+                
+                // Check if motion exceeds threshold
+                if (totalDelta > motionThreshold) {
+                    updateMotionStatus(true);
+                    
+                    // Clear existing timeout and set new one
+                    if (motionTimeout) clearTimeout(motionTimeout);
+                    motionTimeout = setTimeout(() => {
+                        updateMotionStatus(false);
+                    }, 500); // Consider still after 500ms of no significant motion
+                }
+                
+                // Update last acceleration values
+                lastAcceleration = { x: acc.x, y: acc.y, z: acc.z };
+            }
+        }
+
+        // Request device motion permission (iOS 13+ and newer Android versions)
+        async function requestMotionPermission() {
+            if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+                try {
+                    const permission = await DeviceMotionEvent.requestPermission();
+                    if (permission === 'granted') {
+                        window.addEventListener('devicemotion', handleDeviceMotion);
+                        return true;
+                    } else {
+                        showError('Motion permission denied. Motion detection may not work.');
+                        return false;
+                    }
+                } catch (error) {
+                    showError('Error requesting motion permission: ' + error.message);
+                    return false;
+                }
+            } else {
+                // For Android Chrome and other browsers - motion sensors work automatically
+                window.addEventListener('devicemotion', handleDeviceMotion);
+                return true;
+            }
+        }
+
+        // Start camera
+        async function startCamera() {
+            try {
+                hideError();
+                
+                // Request camera access
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        facingMode: 'environment', // Use back camera if available
+                        width: { ideal: 640 },
+                        height: { ideal: 480 }
+                    }, 
+                    audio: false 
+                });
+                
+                video.srcObject = stream;
+                
+                // Request motion sensor access
+                await requestMotionPermission();
+                
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                
+            } catch (error) {
+                let errorMessage = 'Camera access failed: ';
+                if (error.name === 'NotAllowedError') {
+                    errorMessage += 'Permission denied. Please allow camera access.';
+                } else if (error.name === 'NotFoundError') {
+                    errorMessage += 'No camera found on this device.';
+                } else if (error.name === 'NotSupportedError') {
+                    errorMessage += 'Camera not supported on this device.';
+                } else {
+                    errorMessage += error.message;
+                }
+                showError(errorMessage);
+            }
+        }
+
+        // Stop camera
+        function stopCamera() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+                video.srcObject = null;
+            }
+            
+            window.removeEventListener('devicemotion', handleDeviceMotion);
+            
+            if (motionTimeout) {
+                clearTimeout(motionTimeout);
+                motionTimeout = null;
+            }
+            
+            updateMotionStatus(false);
+            sensorData.style.display = 'none';
+            
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            hideError();
+        }
+
+        // Event listeners
+        startBtn.addEventListener('click', startCamera);
+        stopBtn.addEventListener('click', stopCamera);
+
+        // Check if the device supports required features
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            showError('Camera API not supported on this device/browser.');
+            startBtn.disabled = true;
+        }
+
+        if (typeof DeviceMotionEvent === 'undefined') {
+            showError('Motion sensors not supported. Only camera will work.');
+        }
+    </script>
+</body>
+</html>
