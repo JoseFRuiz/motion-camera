@@ -67,6 +67,18 @@
             animation: pulse 1s infinite;
         }
 
+        .moving-left {
+            background: rgba(59, 130, 246, 0.3);
+            color: #3b82f6;
+            animation: pulse 1s infinite;
+        }
+
+        .moving-right {
+            background: rgba(168, 85, 247, 0.3);
+            color: #a855f7;
+            animation: pulse 1s infinite;
+        }
+
         @keyframes pulse {
             0%, 100% { transform: scale(1); }
             50% { transform: scale(1.05); }
@@ -161,6 +173,9 @@
         let lastAcceleration = { x: 0, y: 0, z: 0 };
         let motionThreshold = 2.5;
         let motionTimeout = null;
+        let directionThreshold = 1.0;
+        let xAccelerationHistory = [];
+        let maxHistoryLength = 10;
 
         // Function to show error messages
         function showError(message) {
@@ -173,12 +188,20 @@
         }
 
         // Function to update motion status
-        function updateMotionStatus(moving) {
-            if (moving !== isMoving) {
+        function updateMotionStatus(moving, direction = null) {
+            if (moving !== isMoving || direction) {
                 isMoving = moving;
                 if (isMoving) {
-                    motionStatus.textContent = '🏃 MOVING';
-                    motionStatus.className = 'motion-status moving';
+                    if (direction === 'left') {
+                        motionStatus.textContent = '⬅️ MOVING LEFT';
+                        motionStatus.className = 'motion-status moving-left';
+                    } else if (direction === 'right') {
+                        motionStatus.textContent = '➡️ MOVING RIGHT';
+                        motionStatus.className = 'motion-status moving-right';
+                    } else {
+                        motionStatus.textContent = '🏃 MOVING';
+                        motionStatus.className = 'motion-status moving';
+                    }
                 } else {
                     motionStatus.textContent = '📱 STILL';
                     motionStatus.className = 'motion-status still';
@@ -186,10 +209,45 @@
             }
         }
 
+        // Function to detect movement direction
+        function detectDirection() {
+            if (xAccelerationHistory.length < 5) return null;
+            
+            // Calculate the trend of X acceleration
+            let positiveCount = 0;
+            let negativeCount = 0;
+            let totalChange = 0;
+            
+            for (let i = 1; i < xAccelerationHistory.length; i++) {
+                const change = xAccelerationHistory[i] - xAccelerationHistory[i-1];
+                totalChange += change;
+                if (change > directionThreshold) {
+                    positiveCount++;
+                } else if (change < -directionThreshold) {
+                    negativeCount++;
+                }
+            }
+            
+            // Determine direction based on the pattern
+            if (positiveCount >= 3 && totalChange > 2) {
+                return 'right'; // Moving right (positive X acceleration trend)
+            } else if (negativeCount >= 3 && totalChange < -2) {
+                return 'left'; // Moving left (negative X acceleration trend)
+            }
+            
+            return null;
+        }
+
         // Handle device motion
         function handleDeviceMotion(event) {
             if (event.accelerationIncludingGravity) {
                 const acc = event.accelerationIncludingGravity;
+                
+                // Track X-axis acceleration history for direction detection
+                xAccelerationHistory.push(acc.x);
+                if (xAccelerationHistory.length > maxHistoryLength) {
+                    xAccelerationHistory.shift();
+                }
                 
                 // Calculate the change in acceleration
                 const deltaX = Math.abs(acc.x - lastAcceleration.x);
@@ -201,13 +259,16 @@
                 // Update sensor data display
                 sensorData.innerHTML = `
                     Acceleration: x=${acc.x?.toFixed(2)}, y=${acc.y?.toFixed(2)}, z=${acc.z?.toFixed(2)}<br>
-                    Motion Delta: ${totalDelta?.toFixed(2)} (threshold: ${motionThreshold})
+                    Motion Delta: ${totalDelta?.toFixed(2)} (threshold: ${motionThreshold})<br>
+                    X History: [${xAccelerationHistory.map(x => x?.toFixed(1)).join(', ')}]
                 `;
                 sensorData.style.display = 'block';
                 
                 // Check if motion exceeds threshold
                 if (totalDelta > motionThreshold) {
-                    updateMotionStatus(true);
+                    // Detect direction
+                    const direction = detectDirection();
+                    updateMotionStatus(true, direction);
                     
                     // Clear existing timeout and set new one
                     if (motionTimeout) clearTimeout(motionTimeout);
@@ -296,6 +357,9 @@
                 clearTimeout(motionTimeout);
                 motionTimeout = null;
             }
+            
+            // Clear acceleration history
+            xAccelerationHistory = [];
             
             updateMotionStatus(false);
             sensorData.style.display = 'none';
