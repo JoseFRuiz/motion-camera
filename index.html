@@ -18,7 +18,7 @@
         }
 
         .container {
-            max-width: 400px;
+            max-width: 800px;
             width: 100%;
             background: rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(10px);
@@ -33,13 +33,54 @@
             font-size: 24px;
         }
 
-        #video {
-            width: 100%;
-            height: 300px;
-            border-radius: 15px;
-            object-fit: cover;
-            background: #333;
+        .data-section {
             margin-bottom: 20px;
+        }
+
+        .table-container {
+            max-height: 300px;
+            overflow-y: auto;
+            border-radius: 10px;
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        th, td {
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        th {
+            background: rgba(255, 255, 255, 0.1);
+            font-weight: bold;
+            position: sticky;
+            top: 0;
+        }
+
+        tr:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .status-still {
+            color: #22c55e;
+        }
+
+        .status-moving {
+            color: #ef4444;
+        }
+
+        .status-moving-left {
+            color: #3b82f6;
+        }
+
+        .status-moving-right {
+            color: #a855f7;
         }
 
         .status-section {
@@ -142,13 +183,32 @@
     <div class="container">
         <h1>📱 Motion Camera</h1>
         
-        <video id="video" autoplay muted playsinline></video>
+        <div class="data-section">
+            <div class="table-container">
+                <table id="movementTable">
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Status</th>
+                            <th>Duration (ms)</th>
+                            <th>X Accel</th>
+                            <th>Y Accel</th>
+                            <th>Z Accel</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody">
+                    </tbody>
+                </table>
+            </div>
+        </div>
         
         <div class="status-section">
             <div id="motionStatus" class="motion-status still">📱 STILL</div>
             <div class="controls">
-                <button id="startBtn">Start Camera</button>
-                <button id="stopBtn" disabled>Stop Camera</button>
+                <button id="startBtn">Start Recording</button>
+                <button id="stopBtn" disabled>Stop Recording</button>
+                <button id="exportBtn" disabled>Export CSV</button>
+                <button id="clearBtn">Clear Data</button>
             </div>
         </div>
 
@@ -161,14 +221,16 @@
     </div>
 
     <script>
-        let video = document.getElementById('video');
         let motionStatus = document.getElementById('motionStatus');
         let startBtn = document.getElementById('startBtn');
         let stopBtn = document.getElementById('stopBtn');
+        let exportBtn = document.getElementById('exportBtn');
+        let clearBtn = document.getElementById('clearBtn');
         let errorDiv = document.getElementById('error');
         let sensorData = document.getElementById('sensorData');
+        let tableBody = document.getElementById('tableBody');
         
-        let stream = null;
+        let isRecording = false;
         let isMoving = false;
         let lastAcceleration = { x: 0, y: 0, z: 0 };
         let motionThreshold = 2.5;
@@ -176,6 +238,14 @@
         let directionThreshold = 1.0;
         let xAccelerationHistory = [];
         let maxHistoryLength = 10;
+        
+        // Data logging variables
+        let movementData = [];
+        let currentStatus = 'still';
+        let statusStartTime = Date.now();
+        let lastStatusChange = 'still';
+        let bounceProtectionTime = 500; // 500ms anti-bounce protection
+        let lastStatusChangeTime = 0;
 
         // Function to show error messages
         function showError(message) {
@@ -189,24 +259,146 @@
 
         // Function to update motion status
         function updateMotionStatus(moving, direction = null) {
-            if (moving !== isMoving || direction) {
-                isMoving = moving;
-                if (isMoving) {
-                    if (direction === 'left') {
-                        motionStatus.textContent = '⬅️ MOVING LEFT';
-                        motionStatus.className = 'motion-status moving-left';
-                    } else if (direction === 'right') {
-                        motionStatus.textContent = '➡️ MOVING RIGHT';
-                        motionStatus.className = 'motion-status moving-right';
-                    } else {
-                        motionStatus.textContent = '🏃 MOVING';
-                        motionStatus.className = 'motion-status moving';
-                    }
+            const now = Date.now();
+            let newStatus = 'still';
+            
+            if (moving) {
+                if (direction === 'left') {
+                    newStatus = 'moving-left';
+                } else if (direction === 'right') {
+                    newStatus = 'moving-right';
                 } else {
-                    motionStatus.textContent = '📱 STILL';
-                    motionStatus.className = 'motion-status still';
+                    newStatus = 'moving';
                 }
             }
+            
+            // Anti-bounce protection: only update if enough time has passed
+            if (newStatus !== currentStatus && (now - lastStatusChangeTime) > bounceProtectionTime) {
+                // Log the previous status if we were recording
+                if (isRecording && currentStatus !== 'still') {
+                    logMovementData(currentStatus, now - statusStartTime);
+                }
+                
+                // Update status
+                currentStatus = newStatus;
+                statusStartTime = now;
+                lastStatusChangeTime = now;
+                
+                // Update visual display
+                if (isMoving !== moving || direction) {
+                    isMoving = moving;
+                    if (isMoving) {
+                        if (direction === 'left') {
+                            motionStatus.textContent = '⬅️ MOVING LEFT';
+                            motionStatus.className = 'motion-status moving-left';
+                        } else if (direction === 'right') {
+                            motionStatus.textContent = '➡️ MOVING RIGHT';
+                            motionStatus.className = 'motion-status moving-right';
+                        } else {
+                            motionStatus.textContent = '🏃 MOVING';
+                            motionStatus.className = 'motion-status moving';
+                        }
+                    } else {
+                        motionStatus.textContent = '📱 STILL';
+                        motionStatus.className = 'motion-status still';
+                    }
+                }
+            }
+        }
+
+        // Function to log movement data to table
+        function logMovementData(status, duration) {
+            const timestamp = new Date().toLocaleTimeString();
+            const row = document.createElement('tr');
+            
+            let statusText = '';
+            let statusClass = '';
+            switch(status) {
+                case 'still':
+                    statusText = '📱 STILL';
+                    statusClass = 'status-still';
+                    break;
+                case 'moving':
+                    statusText = '🏃 MOVING';
+                    statusClass = 'status-moving';
+                    break;
+                case 'moving-left':
+                    statusText = '⬅️ MOVING LEFT';
+                    statusClass = 'status-moving-left';
+                    break;
+                case 'moving-right':
+                    statusText = '➡️ MOVING RIGHT';
+                    statusClass = 'status-moving-right';
+                    break;
+            }
+            
+            row.innerHTML = `
+                <td>${timestamp}</td>
+                <td class="${statusClass}">${statusText}</td>
+                <td>${duration}</td>
+                <td>${lastAcceleration.x?.toFixed(2) || 'N/A'}</td>
+                <td>${lastAcceleration.y?.toFixed(2) || 'N/A'}</td>
+                <td>${lastAcceleration.z?.toFixed(2) || 'N/A'}</td>
+            `;
+            
+            tableBody.appendChild(row);
+            
+            // Store data for CSV export
+            movementData.push({
+                timestamp: timestamp,
+                status: statusText,
+                duration: duration,
+                xAccel: lastAcceleration.x?.toFixed(2) || 'N/A',
+                yAccel: lastAcceleration.y?.toFixed(2) || 'N/A',
+                zAccel: lastAcceleration.z?.toFixed(2) || 'N/A'
+            });
+            
+            // Enable export button after first data entry
+            if (movementData.length === 1) {
+                exportBtn.disabled = false;
+            }
+            
+            // Auto-scroll to bottom
+            tableBody.parentElement.parentElement.scrollTop = tableBody.parentElement.parentElement.scrollHeight;
+        }
+
+        // Function to export data as CSV
+        function exportToCSV() {
+            if (movementData.length === 0) {
+                showError('No data to export.');
+                return;
+            }
+            
+            const headers = ['Timestamp', 'Status', 'Duration (ms)', 'X Accel', 'Y Accel', 'Z Accel'];
+            const csvContent = [
+                headers.join(','),
+                ...movementData.map(row => [
+                    `"${row.timestamp}"`,
+                    `"${row.status}"`,
+                    row.duration,
+                    row.xAccel,
+                    row.yAccel,
+                    row.zAccel
+                ].join(','))
+            ].join('\n');
+            
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', `motion_data_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // Function to clear all data
+        function clearData() {
+            movementData = [];
+            tableBody.innerHTML = '';
+            exportBtn.disabled = true;
+            hideError();
         }
 
         // Function to detect movement direction
@@ -240,6 +432,8 @@
 
         // Handle device motion
         function handleDeviceMotion(event) {
+            if (!isRecording) return;
+            
             if (event.accelerationIncludingGravity) {
                 const acc = event.accelerationIncludingGravity;
                 
@@ -305,82 +499,78 @@
             }
         }
 
-        // Start camera
-        async function startCamera() {
+        // Start recording
+        async function startRecording() {
             try {
                 hideError();
                 
-                // Request camera access
-                stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { 
-                        facingMode: 'environment', // Use back camera if available
-                        width: { ideal: 640 },
-                        height: { ideal: 480 }
-                    }, 
-                    audio: false 
-                });
-                
-                video.srcObject = stream;
-                
                 // Request motion sensor access
-                await requestMotionPermission();
+                const motionGranted = await requestMotionPermission();
                 
-                startBtn.disabled = true;
-                stopBtn.disabled = false;
+                if (motionGranted) {
+                    isRecording = true;
+                    currentStatus = 'still';
+                    statusStartTime = Date.now();
+                    lastStatusChangeTime = Date.now();
+                    
+                    startBtn.disabled = true;
+                    stopBtn.disabled = false;
+                    exportBtn.disabled = true; // Enable after first data entry
+                    
+                    showError('Recording started. Move your device to log movement data.');
+                    setTimeout(hideError, 3000);
+                } else {
+                    showError('Motion sensors are required for recording.');
+                }
                 
             } catch (error) {
-                let errorMessage = 'Camera access failed: ';
-                if (error.name === 'NotAllowedError') {
-                    errorMessage += 'Permission denied. Please allow camera access.';
-                } else if (error.name === 'NotFoundError') {
-                    errorMessage += 'No camera found on this device.';
-                } else if (error.name === 'NotSupportedError') {
-                    errorMessage += 'Camera not supported on this device.';
-                } else {
-                    errorMessage += error.message;
-                }
-                showError(errorMessage);
+                showError('Failed to start recording: ' + error.message);
             }
         }
 
-        // Stop camera
-        function stopCamera() {
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-                stream = null;
-                video.srcObject = null;
+        // Stop recording
+        function stopRecording() {
+            if (isRecording) {
+                // Log final movement if still in progress
+                if (currentStatus !== 'still') {
+                    const finalDuration = Date.now() - statusStartTime;
+                    logMovementData(currentStatus, finalDuration);
+                }
+                
+                isRecording = false;
+                window.removeEventListener('devicemotion', handleDeviceMotion);
+                
+                if (motionTimeout) {
+                    clearTimeout(motionTimeout);
+                    motionTimeout = null;
+                }
+                
+                // Clear acceleration history
+                xAccelerationHistory = [];
+                
+                updateMotionStatus(false);
+                sensorData.style.display = 'none';
+                
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                exportBtn.disabled = false;
+                hideError();
+                
+                showError('Recording stopped. You can now export the data as CSV.');
+                setTimeout(hideError, 3000);
             }
-            
-            window.removeEventListener('devicemotion', handleDeviceMotion);
-            
-            if (motionTimeout) {
-                clearTimeout(motionTimeout);
-                motionTimeout = null;
-            }
-            
-            // Clear acceleration history
-            xAccelerationHistory = [];
-            
-            updateMotionStatus(false);
-            sensorData.style.display = 'none';
-            
-            startBtn.disabled = false;
-            stopBtn.disabled = true;
-            hideError();
         }
 
         // Event listeners
-        startBtn.addEventListener('click', startCamera);
-        stopBtn.addEventListener('click', stopCamera);
+        startBtn.addEventListener('click', startRecording);
+        stopBtn.addEventListener('click', stopRecording);
+        exportBtn.addEventListener('click', exportToCSV);
+        clearBtn.addEventListener('click', clearData);
 
         // Check if the device supports required features
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            showError('Camera API not supported on this device/browser.');
-            startBtn.disabled = true;
-        }
-
         if (typeof DeviceMotionEvent === 'undefined') {
-            showError('Motion sensors not supported. Only camera will work.');
+            showError('Motion sensors not supported on this device/browser.');
+            startBtn.disabled = true;
         }
     </script>
 </body>
